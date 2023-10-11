@@ -327,10 +327,8 @@ void main(void)
 
             // serial_printf(&SerialA, "Num Timer2:%ld Num SerialRX: %ld\r\n", CpuTimer2.InterruptCount, numRXA); //KOR commenting out original serial print to modify for task 5 of this assignment
             // serial_printf(&SerialA, "\rTimeint = %ld, Time = %.2fsec, Input = %.3f, SatOut = %.2f\n ", timeint, time, sinvalue, satvalue); //KOR, commenting out the first part of task 5 to finish the last part of task 5
-            // serial_printf(&SerialA, "\rTimeint = %ld, V1 = %d, V2 = %ld, V3 = %d ", timeint, plusone, minusone, plustwo); //KOR commented out correct version so that incorrect can be observed
-            serial_printf(&SerialA,
-                          "\rTimeint = %d, V1 = %d, V2 = %d, V3 = %d ", timeint,
-                          plusone, minusone, plustwo); //KOR Incorrect code only sees V1 and V2 being altered and only one line visible at a time when variables are incorrect
+            // serial_printf(&SerialA, "\rTimeint = %ld, V1 = %d, V2 = %ld, V3 = %d\r\n ", timeint, plusone, minusone, plustwo); //KOR commented out correct version so that incorrect can be observed
+             serial_printf(&SerialA,"\rTimeint = %d, V1 = %d, V2 = %d, V3 = %d\r\n ", timeint,plusone, minusone, plustwo); //KOR Incorrect code only sees V1 and V2 being altered as it looks to fill in the variables based on what is found first, so the 32int is split in between time int and v1 with 16 being v2 and v3 being the first half of the 32int, they basically shift over.
             //KOR to remember %d for 16 int this will just be known as d for digit but for 32 int being %ld this will be remembered by knowing its a longer/larger digit as 32 is larger/longer than 16 and ld can stand for longer/larger digit
 
             // KOR part n: For me, I find it easy to remember the floating point format for the printf statements by knowing that for precision I need percent(%) period(.) (some alliteration and period to me equals definitive) with the number of digits and f because it is for print f
