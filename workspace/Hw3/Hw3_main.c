@@ -33,6 +33,130 @@ __interrupt void cpu_timer1_isr(void);
 __interrupt void cpu_timer2_isr(void);
 __interrupt void SWI_isr(void);
 
+//KOR Adding variables and function for using the i2c serial port communication with the DAN777 and BQ3200 Real-Time Clock chip
+void I2CB_Init(void);
+int16_t WriteDAN777RCServo(uint16_t RC1, uint16_t RC2);
+int16_t ReadDAN777ADC(uint16_t *ADC1, uint16_t *ADC2);
+int16_t WriteBQ32000(uint16_t second,uint16_t minute,uint16_t hour,uint16_t day,uint16_t date,uint16_t month,uint16_t year);
+int16_t ReadBQ32000(uint16_t *second,uint16_t *minute,uint16_t *hour,uint16_t *day,uint16_t *date,uint16_t*month,uint16_t *year);
+int16_t I2C_CheckIfTX(uint16_t timeout);
+int16_t I2C_CheckIfRX(uint16_t timeout);
+uint16_t RunI2C = 0; // Flag variable to indicate when to run I2C commands
+int16_t I2C_OK = 0;
+int32_t num_WriteDAN_Errors = 0;//KOR adding the error variables for DAN
+int32_t num_ReadDAN_Errors = 0;
+//int32_t num_WriteBQ_Errors = 0; //KOR adding the error variables for BQ? check if i need these
+//int32_t num_ReadBQ_Errors = 0;
+//KOR Writing the variables needed  for our functions
+uint16_t KORADC1 = 0;
+uint16_t KORADC2 = 0;
+uint16_t KORRC1 = 1200;
+uint16_t KORRC2 = 1200;
+uint16_t KORSecond = 0;
+uint16_t KORMinute = 0;
+uint16_t KORHour = 0;
+uint16_t KORDay = 0;
+uint16_t KORDate = 0;
+uint16_t KORMonth = 0;
+uint16_t KORYear = 0;
+//int16_t RCm1 = 1;
+//int16_t RCm2 = 1;
+float ADCVolts1 = 0;
+float ADCVolts2 = 0;
+
+
+//KOR Adding the initializing code for the I2C Port
+/* Functions to check if I2C is ready to transfer or receive.
+ * Here we utilize EPWM7 to keep track of time. If I2C is
+ * not ready, wait 100ms then try again. */
+int16_t I2C_CheckIfTX(uint16_t timeout) {
+    int16_t Xrdy = 0;
+    EPwm7Regs.TBCTR = 0x0; // Clear counter
+    EPwm7Regs.TBCTL.bit.CTRMODE = 0; // unfreeze, and enter up count mode
+    while(!Xrdy) {
+        if (EPwm7Regs.TBCTR > timeout) { // if it has been 100ms
+            EPwm7Regs.TBCTL.bit.CTRMODE = 3; // freeze counter
+            return -1;
+        }
+        Xrdy = I2cbRegs.I2CSTR.bit.XRDY;
+    }
+    return 0;
+}
+int16_t I2C_CheckIfRX(uint16_t timeout) {
+    int16_t Rrdy = 0;
+    EPwm7Regs.TBCTR = 0x0; // Clear counter
+    EPwm7Regs.TBCTL.bit.CTRMODE = 0; //unfreeze, and enter up count mode
+    while(!Rrdy) {
+        if (EPwm7Regs.TBCTR > timeout) { // if we have been in this function for 100ms
+            EPwm7Regs.TBCTL.bit.CTRMODE = 3; // freeze counter
+            return -1;
+        }
+        Rrdy = I2cbRegs.I2CSTR.bit.RRDY;
+    }
+    return 0;
+}
+void I2CB_Init(void) {
+    // Setting up EPWM 7 to use as a timer for error handling
+    EALLOW;
+    EPwm7Regs.ETSEL.bit.SOCAEN = 0; // Disable SOC on A group
+    EPwm7Regs.TBCTL.bit.CTRMODE = 3; // Freeze counter
+    EPwm7Regs.TBCTR = 0x0; // Clear counter
+    EPwm7Regs.TBPHS.bit.TBPHS = 0x0000; // Phase is 0
+    EPwm7Regs.TBCTL.bit.PHSEN = 0; // Disable phase loading
+    EPwm7Regs.TBCTL.bit.CLKDIV = 7; // divide by 1 50Mhz Clock
+    EPwm7Regs.TBPRD = 0xFFFF; // PRD not used for timer
+    // Notice here we are not using the PWM signal, so CMPA/CMPB are not set
+    EDIS;
+    /* If an I2C device is holding the SDA Line Low you need to tell the device
+     * to reinitialize by clocking 9 clocks to the device to reset it. */
+    GpioDataRegs.GPBSET.bit.GPIO41 = 1; // Here make sure SCL clk is high
+    GPIO_SetupPinMux(41, GPIO_MUX_CPU1, 0);
+    GPIO_SetupPinOptions(41, GPIO_OUTPUT, GPIO_PUSHPULL);
+    // Set SDA as GPIO input pin for now to check if SDA is being held low.
+    GPIO_SetupPinMux(40, GPIO_MUX_CPU1, 0);
+    GPIO_SetupPinOptions(40, GPIO_INPUT, GPIO_PULLUP);
+    /* Check if SDA is low. If it is manually set the SCL pin high and low to
+     * create nine clock periods. For more reading see the I2C specification linked
+     * in this homework document and search for "nine clock pulses" */
+    if (GpioDataRegs.GPBDAT.bit.GPIO40 == 0) { // If SDA low
+        // Pulse CLK 9 Times if SDA pin Low
+        for (int i = 0; i<9; i++) {
+            GpioDataRegs.GPBSET.bit.GPIO41 = 1;
+            DELAY_US(30);
+            GpioDataRegs.GPBCLEAR.bit.GPIO41 = 1;
+            DELAY_US(30);
+        }
+    }
+    // Now setup GPIO40 as SDAB and GPIO41 and SCLB
+    EALLOW;
+    /* Enable internal pull-up for the selected I2C pins */
+    GpioCtrlRegs.GPBPUD.bit.GPIO40 = 1;
+    GpioCtrlRegs.GPBPUD.bit.GPIO41 = 1;
+    /* Set qualification for the selected I2C pins */
+    GpioCtrlRegs.GPBQSEL1.bit.GPIO40 = 3;
+    GpioCtrlRegs.GPBQSEL1.bit.GPIO41 = 3;
+    /* Configure which of the possible GPIO pins will be I2C_B pins using GPIO regs*/
+    GpioCtrlRegs.GPBGMUX1.bit.GPIO40 = 1;
+    GpioCtrlRegs.GPBMUX1.bit.GPIO40 = 2;
+    GpioCtrlRegs.GPBGMUX1.bit.GPIO41 = 1;
+    GpioCtrlRegs.GPBMUX1.bit.GPIO41 = 2;
+    EDIS;
+    // At breakpoint, allow I2C to continue operating
+    I2cbRegs.I2CMDR.bit.FREE = 1;
+    // Initialize I2C
+    I2cbRegs.I2CMDR.bit.IRS = 0;
+    // 200MHz / 20 = 10MHz
+    I2cbRegs.I2CPSC.all = 19;
+    // 10MHz/40 = 250KHz
+    I2cbRegs.I2CCLKL = 15*3; //psc > 2 so d = 5 See Usersguide
+    I2cbRegs.I2CCLKH = 15*3; //psc > 2 so d = 5 See Usersguide
+    I2cbRegs.I2CIER.all = 0x00;
+    I2cbRegs.I2CMDR.bit.IRS = 1;
+    DELAY_US(2000);
+}
+
+
+
 // Count variables
 uint32_t numTimer0calls = 0;
 uint32_t numSWIcalls = 0;
@@ -48,93 +172,93 @@ void main(void)
     InitSysCtrl();
 
     InitGpio();
-	
-	// Blue LED on LaunchPad
+
+    // Blue LED on LaunchPad
     GPIO_SetupPinMux(31, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(31, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPASET.bit.GPIO31 = 1;
 
-	// Red LED on LaunchPad
+    // Red LED on LaunchPad
     GPIO_SetupPinMux(34, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(34, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPBSET.bit.GPIO34 = 1;
 
-	// LED1 and PWM Pin
+    // LED1 and PWM Pin
     GPIO_SetupPinMux(22, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(22, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPACLEAR.bit.GPIO22 = 1;
-	
-	// LED2
+
+    // LED2
     GPIO_SetupPinMux(94, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(94, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPCCLEAR.bit.GPIO94 = 1;
 
-	// LED3
+    // LED3
     GPIO_SetupPinMux(95, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(95, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPCCLEAR.bit.GPIO95 = 1;
 
-	// LED4
+    // LED4
     GPIO_SetupPinMux(97, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(97, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPDCLEAR.bit.GPIO97 = 1;
 
-	// LED5
+    // LED5
     GPIO_SetupPinMux(111, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(111, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPDCLEAR.bit.GPIO111 = 1;
 
-	// LED6
+    // LED6
     GPIO_SetupPinMux(130, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(130, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPECLEAR.bit.GPIO130 = 1;
 
-	// LED7	
+    // LED7
     GPIO_SetupPinMux(131, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(131, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPECLEAR.bit.GPIO131 = 1;
 
-	// LED8
+    // LED8
     GPIO_SetupPinMux(25, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(25, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPACLEAR.bit.GPIO25 = 1;
 
-	// LED9
+    // LED9
     GPIO_SetupPinMux(26, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(26, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPACLEAR.bit.GPIO26 = 1;
 
-	// LED10
+    // LED10
     GPIO_SetupPinMux(27, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(27, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPACLEAR.bit.GPIO27 = 1;
 
-	// LED11	
+    // LED11
     GPIO_SetupPinMux(60, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(60, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPBCLEAR.bit.GPIO60 = 1;
 
-	// LED12	
+    // LED12
     GPIO_SetupPinMux(61, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(61, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPBCLEAR.bit.GPIO61 = 1;
 
-	// LED13
+    // LED13
     GPIO_SetupPinMux(157, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(157, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPECLEAR.bit.GPIO157 = 1;
 
-	// LED14
+    // LED14
     GPIO_SetupPinMux(158, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(158, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPECLEAR.bit.GPIO158 = 1;
-	
-	// LED15
+
+    // LED15
     GPIO_SetupPinMux(159, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(159, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPECLEAR.bit.GPIO159 = 1;
 
-	// LED16
+    // LED16
     GPIO_SetupPinMux(160, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(160, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPFCLEAR.bit.GPIO160 = 1;
@@ -149,7 +273,7 @@ void main(void)
     GPIO_SetupPinOptions(1, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPASET.bit.GPIO1 = 1;
 
-	//SPIRAM  CS  Chip Select
+    //SPIRAM  CS  Chip Select
     GPIO_SetupPinMux(19, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(19, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPASET.bit.GPIO19 = 1;
@@ -168,17 +292,17 @@ void main(void)
     GPIO_SetupPinMux(9, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(9, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPASET.bit.GPIO9 = 1;
-	
+
     //MPU9250  CS  Chip Select
     GPIO_SetupPinMux(66, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(66, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPCSET.bit.GPIO66 = 1;
-	
-	//WIZNET  CS  Chip Select
+
+    //WIZNET  CS  Chip Select
     GPIO_SetupPinMux(125, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(125, GPIO_OUTPUT, GPIO_PUSHPULL);
     GpioDataRegs.GPDSET.bit.GPIO125 = 1;
-	
+
     //PushButton 1
     GPIO_SetupPinMux(4, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(4, GPIO_INPUT, GPIO_PULLUP);
@@ -194,8 +318,8 @@ void main(void)
     //PushButton 4
     GPIO_SetupPinMux(7, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(7, GPIO_INPUT, GPIO_PULLUP);
-	
-	//Joy Stick Pushbutton
+
+    //Joy Stick Pushbutton
     GPIO_SetupPinMux(8, GPIO_MUX_CPU1, 0);
     GPIO_SetupPinOptions(8, GPIO_INPUT, GPIO_PULLUP);
 
@@ -248,15 +372,15 @@ void main(void)
     // Configure CPU-Timer 0, 1, and 2 to interrupt every given period:
     // 200MHz CPU Freq,                       Period (in uSeconds)
     ConfigCpuTimer(&CpuTimer0, LAUNCHPAD_CPU_FREQUENCY, 10000);
-    ConfigCpuTimer(&CpuTimer1, LAUNCHPAD_CPU_FREQUENCY, 20000);
-    ConfigCpuTimer(&CpuTimer2, LAUNCHPAD_CPU_FREQUENCY, 40000);
+    ConfigCpuTimer(&CpuTimer1, LAUNCHPAD_CPU_FREQUENCY, 20000); // KOR every 20ms for flag varibal
+    ConfigCpuTimer(&CpuTimer2, LAUNCHPAD_CPU_FREQUENCY, 10000); // KOR printing to tera term every 100ms
 
     // Enable CpuTimer Interrupt bit TIE
     CpuTimer0Regs.TCR.all = 0x4000;
     CpuTimer1Regs.TCR.all = 0x4000;
     CpuTimer2Regs.TCR.all = 0x4000;
 
-	init_serialSCIA(&SerialA,115200);
+    init_serialSCIA(&SerialA,115200);
 
     // Enable CPU int1 which is connected to CPU-Timer 0, CPU int13
     // which is connected to CPU-Timer 1, and CPU int 14, which is connected
@@ -270,94 +394,371 @@ void main(void)
 
     // Enable TINT0 in the PIE: Group 1 interrupt 7
     PieCtrlRegs.PIEIER1.bit.INTx7 = 1;
-	// Enable SWI in the PIE: Group 12 interrupt 9
+    // Enable SWI in the PIE: Group 12 interrupt 9
     PieCtrlRegs.PIEIER12.bit.INTx9 = 1;
-	
-	init_serialSCIB(&SerialB,115200);
-	init_serialSCIC(&SerialC,115200);
-	init_serialSCID(&SerialD,115200);
+
+    init_serialSCIB(&SerialB,115200);
+    init_serialSCIC(&SerialC,115200);
+    init_serialSCID(&SerialD,115200);
     // Enable global Interrupts and higher priority real-time debug events
     EINT;  // Enable Global interrupt INTM
     ERTM;  // Enable Global realtime interrupt DBGM
 
-    
+
+    I2CB_Init();
+    // WriteBQ32000(second, minute, hour, day, date, month, year); //KOR Function for date time general
+    WriteBQ32000(0, 54, 21, 5, 25, 3, 21);
+
+
+
+
     // IDLE loop. Just sit and loop forever (optional):
+    //KOR Modified while loop for DAN777 Read/write
     while(1)
     {
         if (UARTPrint == 1 ) {
-			serial_printf(&SerialA,"Num Timer2:%ld Num SerialRX: %ld\r\n",CpuTimer2.InterruptCount,numRXA);
+            ADCVolts1 = (3.3 / 1023);
+            ADCVolts2 = (3.3 / 1023);
+
+            serial_printf(&SerialA,"ADC1: %d, ADC2: %d, ADCVolts1: %0.4f, ADCVolts2: %f\r\n", KORADC1, KORADC2, ADCVolts1, ADCVolts2);
             UARTPrint = 0;
         }
-    }
-}
+        if (RunI2C == 1) {
+            RunI2C = 0;
+            // Write to DAN
+            I2C_OK = WriteDAN777RCServo(KORRC1, KORRC2);
+            num_WriteDAN_Errors = 0;
+            while(I2C_OK != 0) {
+                num_WriteDAN_Errors++;
 
+                if (num_WriteDAN_Errors > 2) {
+                    serial_printf(&SerialA,"WriteDAN777RCServo Error: %d\r\n",I2C_OK);
+                    I2C_OK = 0;
+                } else {
+                    I2CB_Init();
+                    DELAY_US(100000);
+                    I2C_OK = WriteDAN777RCServo(KORRC1, KORRC2);
+                }
+            }
+            // Read DAN
+            I2C_OK = ReadDAN777AD(&KORADC1, &KORADC2);
+            num_ReadDAN_Errors = 0;
+            while(I2C_OK != 0) {
+                num_ReadDAN_Errors++;
+                if (num_ReadDAN_Errors > 2) {
+                    serial_printf(&SerialA,"ReadDAN777AD Error: %d\r\n",I2C_OK);
+                    I2C_OK = 0;
+                } else {
+                    I2CB_Init();
+                    DELAY_US(100000);
+                    I2C_OK = ReadDAN777AD(&KORADC1, &KORADC2);
+                }
+            }
+        }
+        //KOR Adding the call for the read and write functions for the BQ32000 Chip
+//        if (UARTPrint == 1 ) {
+//            serial_printf(&SerialA,"RC1: %d, RC2: %d, ADC1: %d, ADC2: %d\r\n", RC1, RC2, ADC1, ADC2);
+//            UARTPrint = 0;
+//        }
 
-// SWI_isr,  Using this interrupt as a Software started interrupt
-__interrupt void SWI_isr(void) {
-
-    // These three lines of code allow SWI_isr, to be interrupted by other interrupt functions
-	// making it lower priority than all other Hardware interrupts.  
-	PieCtrlRegs.PIEACK.all = PIEACK_GROUP12;
-    asm("       NOP");                    // Wait one cycle
-    EINT;                                 // Clear INTM to enable interrupts
-	
-	
-	
-    // Insert SWI ISR Code here.......
-	
-	
-    numSWIcalls++;
-    
-    DINT;
-
-}
-
-// cpu_timer0_isr - CPU Timer0 ISR
-__interrupt void cpu_timer0_isr(void)
-{
-    CpuTimer0.InterruptCount++;
-
-    numTimer0calls++;
-
-//    if ((numTimer0calls%50) == 0) {
-//        PieCtrlRegs.PIEIFR12.bit.INTx9 = 1;  // Manually cause the interrupt for the SWI
+//        if (RunI2C == 1) {
+//            RunI2C = 0;
+//            // Write to BQ
+//            I2C_OK = WriteBQ32000(RC1, RC2);
+//            num_WriteBQ_Errors = 0;
+//            while(I2C_OK != 0) {
+//                num_WriteBQ_Errors++;
+//
+//                if (num_WriteBQ_Errors > 2) {
+//                    serial_printf(&SerialA,"WriteBQ32000 Error: %d\r\n",I2C_OK);
+//                    I2C_OK = 0;
+//                } else {
+//                    I2CB_Init();
+//                    DELAY_US(100000);
+//                    I2C_OK = WriteBQ32000(CMDXYZ1, CMDXYZ2);
+//                }
+//            }
+//            // Read BQ
+//            I2C_OK = ReadBQ32000(&ADC1, &ADC2);
+//            num_ReadBQ_Errors = 0;
+//            while(I2C_OK != 0) {
+//                num_ReadBQ_Errors++;
+//                if (num_ReadBQ_Errors > 2) {
+//                    serial_printf(&SerialA,"ReadBQ32000 Error: %d\r\n",I2C_OK);
+//                    I2C_OK = 0;
+//                } else {
+//                    I2CB_Init();
+//                    DELAY_US(100000);
+//                    I2C_OK = ReadBQ32000(&ADC1, &ADC2);
+//                }
+//            }
+//        }
 //    }
 
-    if ((numTimer0calls%25) == 0) {
-        displayLEDletter(LEDdisplaynum);
-        LEDdisplaynum++;
-        if (LEDdisplaynum == 0xFFFF) {  // prevent roll over exception
-            LEDdisplaynum = 0;
+    // SWI_isr,  Using this interrupt as a Software started interrupt
+    __interrupt void SWI_isr(void) {
+
+        // These three lines of code allow SWI_isr, to be interrupted by other interrupt functions
+        // making it lower priority than all other Hardware interrupts.
+        PieCtrlRegs.PIEACK.all = PIEACK_GROUP12;
+        asm("       NOP");                    // Wait one cycle
+        EINT;                                 // Clear INTM to enable interrupts
+
+
+
+        // Insert SWI ISR Code here.......
+
+
+        numSWIcalls++;
+
+        DINT;
+
+    }
+
+    // cpu_timer0_isr - CPU Timer0 ISR
+    __interrupt void cpu_timer0_isr(void)
+    {
+        CpuTimer0.InterruptCount++;
+
+        numTimer0calls++;
+
+        //    if ((numTimer0calls%50) == 0) {
+        //        PieCtrlRegs.PIEIFR12.bit.INTx9 = 1;  // Manually cause the interrupt for the SWI
+        //    }
+
+        if ((numTimer0calls%25) == 0) {
+            displayLEDletter(LEDdisplaynum);
+            LEDdisplaynum++;
+            if (LEDdisplaynum == 0xFFFF) {  // prevent roll over exception
+                LEDdisplaynum = 0;
+            }
         }
+
+        if ((numTimer0calls%50) == 0) {
+            // Blink LaunchPad Red LED
+            GpioDataRegs.GPBTOGGLE.bit.GPIO34 = 1;
+        }
+
+
+        // Acknowledge this interrupt to receive more interrupts from group 1
+        PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
     }
 
-    if ((numTimer0calls%50) == 0) {
-		// Blink LaunchPad Red LED
-		GpioDataRegs.GPBTOGGLE.bit.GPIO34 = 1;
+    // cpu_timer1_isr - CPU Timer1 ISR
+    __interrupt void cpu_timer1_isr(void)
+    {
+        RunI2C = 1; //KOR Flag RunI2C every 20 ms
+
+        //KOR Adding the command for the RC servo motors to continuously increase to approximately 90 degres and then -90 degrees like in Lab 3
+//        if (controleffort >= 10){
+//                flag2=1;
+//            }
+//            if (flag2 == 1 ){
+//                controleffort -=0.005;
+//                if(controleffort<=-10)
+//                    flag2=0;
+//            }else{
+//                controleffort +=0.005;
+//                flag2=0;
+//            }
+//
+//
+//            //FCH_KOR: Exercise 2
+//            if (flagdegrees1 == 0) {
+//                degrees = degrees + 0.05;
+//                if (degrees >= 90)
+//                    flagdegrees1 = 1;
+//            }
+//            else if (flagdegrees1 == 1 ) {
+//                degrees = degrees - 0.05;
+//                if (degrees <= -90)
+//                    flagdegrees1 = 0;
+//            }
+
+        CpuTimer1.InterruptCount++;
+    }
+
+    // cpu_timer2_isr CPU Timer2 ISR
+    __interrupt void cpu_timer2_isr(void)
+    {
+        // Blink LaunchPad Blue LED
+        GpioDataRegs.GPATOGGLE.bit.GPIO31 = 1;
+
+        CpuTimer2.InterruptCount++;
+
+          if ((CpuTimer2.InterruptCount % 10) == 0) { //KOR commenting to print to tera term every 100 ms for the two chips
+         UARTPrint = 1;
+
+    }
+}
+
+
+//KOR Write 2 16-bit commands (LSB then MSB) to I2C Slave DAN starting at DAN's register 4
+int16_t WriteDAN777RCServo(uint16_t RC1, uint16_t RC2){ //KOR Write for Dan777RCServo
+    uint16_t RC1LSB = 0;
+    uint16_t RC1MSB = 0;
+    uint16_t RC2LSB = 0;
+    uint16_t RC2MSB = 0;
+
+    RC1LSB = RC1 & 0xFF; //Bottom 8 bits of command
+    RC1MSB = (RC1 >> 8) & 0xFF; //Top 8 bits of command
+    RC2LSB = RC2 & 0xFF; //Bottom 8 bits of command
+    RC2MSB = (RC2 >> 8) & 0xFF; //Top 8 bits of command
+    // Allow time for I2C to finish up previous commands.
+    DELAY_US(200);
+    if (I2cbRegs.I2CSTR.bit.BB == 1) { // Check if I2C busy. If it is, it's better
+        return 2; // to exit and try again next sample.
+    } // This should not happen too often.
+
+
+    I2C_Xready = I2C_CheckIfTX(39062); // Poll until I2C is ready to transmit
+    if (I2C_Xready == -1) {
+        return 4;
+    }
+
+    I2cbRegs.I2CSAR.all = 0x25; //KOR Set I2C address to that of DAN
+    I2cbRegs.I2CCNT = 5; // Number of values to send plus start register: 4 + 1
+    I2cbRegs.I2CDXR.all = 4; // First need to transfer the register value to start writing data
+    I2cbRegs.I2CMDR.all = 0x6E20; // I2C in master mode (MST), I2C is in transmit mode (TRX) with startand stop
+
+
+    I2C_Xready = I2C_CheckIfTX(39062); // Poll until I2C ready to transmit
+    if (I2C_Xready == -1) {
+        return 4;
+    }
+    I2cbRegs.I2CDXR.all = RC1LSB; // Write Command 1 LSB
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
     }
 
 
-    // Acknowledge this interrupt to receive more interrupts from group 1
-    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
+    I2C_Xready = I2C_CheckIfTX(39062); // Poll until I2C ready to transmit
+    if (I2C_Xready == -1) {
+        return 4;
+    }
+    I2cbRegs.I2CDXR.all = RC1MSB; // Write Command 1 MSB
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
+    }
+
+
+    I2C_Xready = I2C_CheckIfTX(39062); // Poll until I2C ready to transmit
+    if (I2C_Xready == -1) {
+        return 4;
+    }
+    I2cbRegs.I2CDXR.all = RC2LSB; // Write Command 2 LSB
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
+    }
+
+
+    I2C_Xready = I2C_CheckIfTX(39062); // Poll until I2C ready to transmit
+    if (I2C_Xready == -1) {
+        return 4;
+    }
+    I2cbRegs.I2CDXR.all = RC2MSB; // Write Command 2 MSB
+    // Since I2CCNT = 0 at this point, a stop condition will be issued
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
+    }
+    return 0;
 }
 
-// cpu_timer1_isr - CPU Timer1 ISR
-__interrupt void cpu_timer1_isr(void)
-{
-		
-    CpuTimer1.InterruptCount++;
+/* Read Two 16 Bit values from I2C Slave DAN starting at DAN's register 10.
+ * Notice the Rvalue1 and Rvalue2 passed as pointers (passed by reference). So pass
+ * address of the uint16_t variable when using this function. For example:
+ * uint16_t Rval1 = 0;
+ * uint16_t Rval2 = 0;
+ * err = ReadTwo16BitValuesFromDAN(&Rval1,&Rval2);
+ * This allows Rval1 and Rval2 to be changed inside the function and return the
+ * values read inside the function. */
+int16_t ReadDAN777ADC(uint16_t *ADC1, uint16_t *ADC2) { //KOR Functions for reading Dan777
+    uint16_t ADC1LSB = 0;
+    uint16_t ADC1MSB = 0;
+    uint16_t ADC2LSB = 0;
+    uint16_t ADC2MSB = 0;
+    int16_t I2C_Xready = 0;
+    int16_t I2C_Rready = 0;
+    // Allow time for I2C to finish up previous commands.
+    DELAY_US(200);
+
+    if (I2cbRegs.I2CSTR.bit.BB == 1) { // Check if I2C busy. If it is, it's better
+        return 2; // to exit and try again next sample.
+    } // This should not happen too often.
+
+
+
+    I2C_Xready = I2C_CheckIfTX(39062); // Poll until I2C ready to transmit
+    if (I2C_Xready == -1) {
+        return 4;
+    }
+
+
+    I2cbRegs.I2CSAR.all = 0x25; //KOR I2C address of DAN
+    I2cbRegs.I2CCNT = 1; // Just sending address to start reading from
+    I2cbRegs.I2CDXR.all = 0; // Start reading at this register location //KOR Register location is 0
+    I2cbRegs.I2CMDR.all = 0x6620; // I2C in master mode (MST), I2C is in transmit mode (TRX) with start
+
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
+    }
+
+
+
+    I2C_Xready = I2C_CheckIfTX(39062); // Poll until I2C ready to transmit
+    if (I2C_Xready == -1) {
+        return 4;
+    }
+
+    while(!I2cbRegs.I2CSTR.bit.XRDY); //KOR Poll until I2C ready to transmit
+
+    // Reissuing another start command to begin reading the values we want
+    I2cbRegs.I2CSAR.all = 0x25; // I2C address of DAN
+    I2cbRegs.I2CCNT = 4; // Receive count
+    I2cbRegs.I2CMDR.all = 0x6C20; // I2C in master mode (MST), TRX=0 (receive mode) with start & stop
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
+    }
+
+
+
+    I2C_Rready = I2C_CheckIfRX(39062); //Poll until I2C has received 8-bit value
+    if (I2C_Rready == -1) {
+        return -1;
+    }
+    ADC1LSB = I2cbRegs.I2CDRR.all; // Read DAN
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
+    }
+
+    I2C_Rready = I2C_CheckIfRX(39062); //Poll until I2C has received 8-bit value
+    if (I2C_Rready == -1) {
+        return -1;
+    }
+    ADC1MSB = I2cbRegs.I2CDRR.all; // Read DAN
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
+    }
+
+    I2C_Rready = I2C_CheckIfRX(39062); //Poll until I2C has received 8-bit value
+    if (I2C_Rready == -1) {
+        return -1;
+    }
+    ADC2LSB = I2cbRegs.I2CDRR.all; // Read DAN
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
+    }
+
+    I2C_Rready = I2C_CheckIfRX(39062); //Poll until I2C has received 8-bit value
+    if (I2C_Rready == -1) {
+        return -1;
+    }
+    ADC2MSB = I2cbRegs.I2CDRR.all; // Read DAN
+    if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
+        return 3; // This should not happen
+    }
+    // Since I2CCNT = 0 at this point, a stop condition will be issued
+    *ADC1 = (ADC1MSB << 8) | (ADC1LSB & 0xFF);
+    *ADC2 = (ADC2MSB << 8) | (ADC2LSB & 0xFF);
+    return 0;
 }
-
-// cpu_timer2_isr CPU Timer2 ISR
-__interrupt void cpu_timer2_isr(void)
-{
-	// Blink LaunchPad Blue LED
-    GpioDataRegs.GPATOGGLE.bit.GPIO31 = 1;
-
-    CpuTimer2.InterruptCount++;
-	
-	if ((CpuTimer2.InterruptCount % 10) == 0) {
-		UARTPrint = 1;
-	}
-}
-
