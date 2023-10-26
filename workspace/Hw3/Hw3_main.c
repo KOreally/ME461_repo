@@ -51,13 +51,6 @@ uint16_t KORADC1 = 0;
 uint16_t KORADC2 = 0;
 uint16_t KORRC1 = 1200;
 uint16_t KORRC2 = 1200;
-uint16_t KORSecond = 0;
-uint16_t KORMinute = 0;
-uint16_t KORHour = 0;
-uint16_t KORDay = 0;
-uint16_t KORDate = 0;
-uint16_t KORMonth = 0;
-uint16_t KORYear = 0;
 int16_t RCm1 = 0; //KOR adding the RC motors for increasing to 90 and then decreasing to -90
 int16_t RCm2 = 0;
 uint16_t KORsec = 0;
@@ -69,6 +62,7 @@ uint16_t KORyear = 0;
 uint16_t KORday = 0;
 float ADCVolts1 = 0;
 float ADCVolts2 = 0;
+
 
 
 //KOR Adding the initializing code for the I2C Port
@@ -170,24 +164,6 @@ extern uint32_t numRXA;
 uint16_t UARTPrint = 0;
 uint16_t LEDdisplaynum = 0;
 
-//KOR writing a function for converting to the Day from the variable
-const char* ConvertVToDay(int16_t KORDay) {
-    if (KORDay == 1) {
-        return "Sunday";
-    } else if (KORDay == 2) {
-        return "Monday";
-    } else if (KORDay == 3) {
-        return "Tuesday";
-    } else if (KORDay == 4) {
-        return "Wednesday";
-    } else if (KORDay == 5) {
-        return "Thursday";
-    } else if (KORDay == 6) {
-        return "Friday";
-    } else if (KORDay== 7) {
-        return "Saturday";
-    }
-}
 
 void main(void)
 {
@@ -431,22 +407,46 @@ void main(void)
     //KOR call the write function for our chip to input the starting point time
     I2CB_Init();
     // WriteBQ32000(second, minute, hour, day, date, month, year); //KOR Function for date time general
-    WriteBQ32000(0, 54, 21, 5, 25, 3, 21); //KOR one time input as starting point
+    //KOR commenting out the starting point as time has been set and we wanted to observe that it continues counting with the battery.
+    // WriteBQ32000(0, 8, 12, 5, 26, 10, 23); //KOR one time input as starting point
 
 
 
 
     // IDLE loop. Just sit and loop forever (optional):
-    //KOR Modified while loop for DAN777 Read/write
+    //KOR Modified while loop for DAN777 Read/write and BQ chip read
     while(1)
     {
         if (UARTPrint == 1 ) {
+            //KOR added if statements where depending on the value of KORday we find match it to day of the week and print it
+            if (KORday == 1) {
+                serial_printf(&SerialA, "Sunday , %d:%d:%d, %d/%d/%d\r\n ", KORhour, KORminute, KORsec, KORmonth , KORdate, KORyear);
+            }
+            if (KORday == 2){
+                serial_printf(&SerialA, "Monday , %d:%d:%d, %d/%d/%d\r\n ", KORhour, KORminute, KORsec, KORmonth , KORdate, KORyear);
+            }
+            if (KORday == 3){
+                serial_printf(&SerialA, "Tuesday , %d:%d:%d, %d/%d/%d\r\n ", KORhour, KORminute, KORsec, KORmonth , KORdate, KORyear);
+            }
+            if (KORday == 4){
+                serial_printf(&SerialA, "Wednesday , %d:%d:%d, %d/%d/%d\r\n ", KORhour, KORminute, KORsec, KORmonth , KORdate, KORyear);
+            }
+            if (KORday == 5){
+                serial_printf(&SerialA, "Thursday , %d:%d:%d, %d/%d/%d\r\n ", KORhour, KORminute, KORsec, KORmonth , KORdate, KORyear);
+            }
+            if (KORday == 6){
+                serial_printf(&SerialA, "Friday , %d:%d:%d, %d/%d/%d\r\n ", KORhour, KORminute, KORsec, KORmonth , KORdate, KORyear);
+            }
+            if (KORday == 7){
+                serial_printf(&SerialA, "Saturday , %d:%d:%d, %d/%d/%d\r\n ", KORhour, KORminute, KORsec, KORmonth , KORdate, KORyear);
 
-            const char* Day = ConvertVToDay(KORDay);
+            }
+            //KOR Scaling for the reading the voltages
             ADCVolts1 = KORADC1*(3.3 / 1023);
             ADCVolts2 = KORADC2*(3.3 / 1023);
 
-            serial_printf(&SerialA,"ADC1: %d, ADC2: %d, ADCVolts1: %0.4f, ADCVolts2: %f\r\n, %s, %d:%d:%d, %d/%d/%d ", KORADC1, KORADC2, ADCVolts1, ADCVolts2, Day, KORHour, KORMinute, KORSecond, KORMonth , KORDate, KORYear);
+            serial_printf(&SerialA,"ADC1: %d, ADC2: %d, ADCVolts1: %0.3f, ADCVolts2: %.3f\r\n ", KORADC1, KORADC2, ADCVolts1, ADCVolts2);
+
             UARTPrint = 0;
         }
         if (RunI2C == 1) {
@@ -483,7 +483,7 @@ void main(void)
             //KOR Adding the call for the read function for the BQ32000 Chip
             //
             // KOR Read BQ
-            I2C_OK = ReadBQ32000(&KORSecond, &KORMinute &KORHour, &KORDay, &KORDate, &KORMonth, &KORYear);
+            I2C_OK = ReadBQ32000(&KORsec, &KORminute, &KORhour, &KORday, &KORdate, &KORmonth, &KORyear);
             num_ReadBQ_Errors = 0;
             while(I2C_OK != 0) {
                 num_ReadBQ_Errors++;
@@ -493,7 +493,7 @@ void main(void)
                 } else {
                     I2CB_Init();
                     DELAY_US(100000);
-                    I2C_OK = (&KORSecond, &KORMinute &KORHour, &KORDay, &KORDate, &KORMonth, &KORYear);
+                    I2C_OK = ReadBQ32000(&KORsec, &KORminute, &KORhour, &KORday, &KORdate, &KORmonth, &KORyear);
                 }
             }
         }
@@ -780,6 +780,7 @@ int16_t ReadDAN777ADC(uint16_t *ADC1, uint16_t *ADC2) { //KOR Functions for read
 
 //KOR Write the read and write functions for write/read for BQ
 int16_t WriteBQ32000(uint16_t second,uint16_t minute,uint16_t hour,uint16_t day,uint16_t date,uint16_t month,uint16_t year){
+    //KOR getting our values for our ones and tens of each value and then shifting/or as necessary to write all the values individually
     uint16_t ones = second%10;
     uint16_t tens = second/10;
     uint16_t KORsec = (tens << 4) | ones;
@@ -821,7 +822,7 @@ int16_t WriteBQ32000(uint16_t second,uint16_t minute,uint16_t hour,uint16_t day,
     }
 
     I2cbRegs.I2CSAR.all = 0x68; //KOR Set I2C address to that of BQ
-    I2cbRegs.I2CCNT = 8; // Number of values to send plus start register: 7 + 1
+    I2cbRegs.I2CCNT = 8; //KOR Number of values to send plus start register: 7 + 1
     I2cbRegs.I2CDXR.all = 0; //KOR First need to transfer the register value to start writing data
     I2cbRegs.I2CMDR.all = 0x6E20; // I2C in master mode (MST), I2C is in transmit mode (TRX) with start and stop
 
@@ -903,33 +904,6 @@ int16_t WriteBQ32000(uint16_t second,uint16_t minute,uint16_t hour,uint16_t day,
  * values read inside the function. */
 int16_t ReadBQ32000(uint16_t *second,uint16_t *minute,uint16_t *hour,uint16_t *day,uint16_t *date,uint16_t*month,uint16_t *year) { //KOR Functions for reading Dan777
 
-    uint16_t ones = KORsec & 0xF;
-    uint16_t tens = (KORsec >> 4) & 0x7;
-    *second = tens * 10 + ones;
-
-    uint16_t ones = KORminute & 0xF;
-    uint16_t tens = (KORminute >> 4) & 0x7;
-    *minute = tens * 10 + ones;
-
-    uint16_t ones = KORhour & 0xF;
-    uint16_t tens = (KORhour >> 4) & 0x7;
-    *hour = tens * 10 + ones;
-
-    uint16_t ones = KORdate & 0xF;
-    uint16_t tens = (KORdate >> 4) & 0x7;
-    *date = tens * 10 + ones;
-
-    uint16_t ones = KORmonth & 0xF;
-    uint16_t tens = (KORmonth >> 4) & 0x7;
-    *month = tens * 10 + ones;
-
-    uint16_t ones = KORyear & 0xF;
-    uint16_t tens = (KORyear >> 4) & 0x7;
-    *year = tens * 10 + ones;
-
-    uint16_t KORday = day;
-
-
     int16_t I2C_Xready = 0;
     int16_t I2C_Rready = 0;
     // Allow time for I2C to finish up previous commands.
@@ -948,8 +922,8 @@ int16_t ReadBQ32000(uint16_t *second,uint16_t *minute,uint16_t *hour,uint16_t *d
 
 
     I2cbRegs.I2CSAR.all = 0x68; //KOR I2C address of BQ
-    I2cbRegs.I2CCNT = 1; // Just sending address to start reading from
-    I2cbRegs.I2CDXR.all = 0; // Start reading at this register location //KOR Register location is 0
+    I2cbRegs.I2CCNT = 1; //KOR Just sending address to start reading from
+    I2cbRegs.I2CDXR.all = 0; //KOR Start reading at this register location //KOR Register location is 0
     I2cbRegs.I2CMDR.all = 0x6620; // I2C in master mode (MST), I2C is in transmit mode (TRX) with start
 
     if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
@@ -967,7 +941,7 @@ int16_t ReadBQ32000(uint16_t *second,uint16_t *minute,uint16_t *hour,uint16_t *d
 
     // Reissuing another start command to begin reading the values we want
     I2cbRegs.I2CSAR.all = 0x68; //KOR I2C address of BQ
-    I2cbRegs.I2CCNT = 7; // Receive count
+    I2cbRegs.I2CCNT = 7; //KOR Receive count
     I2cbRegs.I2CMDR.all = 0x6C20; // I2C in master mode (MST), TRX=0 (receive mode) with start & stop
     if (I2cbRegs.I2CSTR.bit.NACK == 1) { // Check for No Acknowledgement
         return 3; // This should not happen
@@ -1036,6 +1010,34 @@ int16_t ReadBQ32000(uint16_t *second,uint16_t *minute,uint16_t *hour,uint16_t *d
     }
 
     // Since I2CCNT = 0 at this point, a stop condition will be issued
+    //KOR doing the inverse of what is done in write in order to get our values in the format necessary for read
+    //KOR didn't need to do anything for day as it is only 1 digit
+    uint16_t ones = KORsec & 0xF;
+    uint16_t tens = (KORsec >> 4) & 0x7;
+    *second = tens * 10 + ones;
+
+    uint16_t onesm = KORminute & 0xF;
+    uint16_t tensm = (KORminute >> 4) & 0x7;
+    *minute = tensm * 10 + onesm;
+
+    uint16_t onesh = KORhour & 0xF;
+    uint16_t tensh = (KORhour >> 4) & 0x7;
+    *hour = tensh * 10 + onesh;
+
+    uint16_t onesd = KORdate & 0xF;
+    uint16_t tensd = (KORdate >> 4) & 0x7;
+    *date = tensd * 10 + onesd;
+
+    uint16_t onesmo = KORmonth & 0xF;
+    uint16_t tensmo = (KORmonth >> 4) & 0x7;
+    *month = tensmo * 10 + onesmo;
+
+    uint16_t onesy = KORyear & 0xF;
+    uint16_t tensy = (KORyear >> 4) & 0x7;
+    *year = tensy * 10 + onesy;
+
+    *day = KORday;
+
 
     return 0;
 }
